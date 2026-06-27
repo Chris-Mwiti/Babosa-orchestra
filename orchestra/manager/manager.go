@@ -66,7 +66,7 @@ func (manager *Manager) updateTask()(error){
 
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("http response: %d\n", resp.StatusCode)
-			return nil
+			return fmt.Errorf("manager request to worker: %s has failed with status code: %s", w, resp.StatusCode) 
 		}
 
 		var tasks []*task.Task
