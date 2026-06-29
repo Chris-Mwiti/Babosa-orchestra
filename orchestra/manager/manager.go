@@ -2,19 +2,24 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"golang.org/x/sync/errgroup"
 	"time"
 
+	circuitbreaker "github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/circuit_breaker"
 	"github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/task"
 	"github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/worker"
 	"github.com/docker/go-connections/nat"
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
+	
 )
 
 var ERR_TASK_404 = errors.New("Task not Found")
@@ -31,6 +36,9 @@ type Manager struct {
 	//implementing a naive scheduling algorithim
 	LastWorker int
 	CurrentWorker string
+
+	mutex sync.Mutex
+	cb circuitbreaker.Circuitbreaker
 }
 
 //actions: Pick the appropriate worker from a pool of workers based on their resource stats
@@ -52,10 +60,32 @@ func (manager *Manager) SelectWorker() (string){
 }
 
 //actions: keep track of the resourece stats of the workers
-func (manager *Manager) updateTask()(error){
+func (manager *Manager) updateTask(ctx context.Context)(error){
  
+	eg, egCtx := errgroup.WithContext(ctx)
 	for _, w := range manager.Workers {
-		url := fmt.Sprintf("http://%s/tasks", w)
+		func(worker string) {
+			eg.Go(func() error {
+				_,err := manager.cb.Execute(
+					func() (interface{}, error) {
+						err := manager.fetchAndUpdateTasks(egCtx,worker)		
+						return nil, err
+					},
+				)
+				return err
+			})
+		}(w)
+	}
+
+	return eg.Wait()
+}
+
+func (manager *Manager) fetchAndUpdateTasks(ctx context.Context, worker string) (error){
+	select {
+	case <- ctx.Done():
+		return errors.New("Context Execution cancelled")
+	default:
+		url := fmt.Sprintf("http://%s/tasks", worker)
 
 		//@todo: Implement a retry func that will retry failed requests for a number of times
 		resp, err := http.Get(url)
@@ -66,7 +96,7 @@ func (manager *Manager) updateTask()(error){
 
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("http response: %d\n", resp.StatusCode)
-			return fmt.Errorf("manager request to worker: %s has failed with status code: %s", w, resp.StatusCode) 
+			return fmt.Errorf("manager request to worker: %s has failed with status code: %s", worker, resp.StatusCode) 
 		}
 
 		var tasks []*task.Task
@@ -78,6 +108,7 @@ func (manager *Manager) updateTask()(error){
 			log.Printf("error while decoding worker response")
 		}
 
+		manager.mutex.Lock()
 		for _, tsk := range tasks{
 			if _, ok := manager.TasksDb[tsk.ID]; !ok{
 				log.Println("task not found")
@@ -85,9 +116,11 @@ func (manager *Manager) updateTask()(error){
 			} 
 			manager.TasksDb[tsk.ID] = tsk
 		}
-	}
+		manager.mutex.Unlock()
 
-	return nil
+		return nil
+
+	}
 }
 
 //actions: add tasks to the task queue
@@ -231,10 +264,10 @@ func (manager *Manager) AddTask(te task.TaskEvent){
 
 //responsible for listening for any updated task state events
 //from listed worker in the worker list
-func (manager *Manager) ListenToUpdates() (error){
+func (manager *Manager) ListenToUpdates(ctx context.Context) (error){
 	log.Printf("Updating the workers tasks %d\n", len(manager.TasksDb))
 	for {
-		if err := manager.updateTask(); err != nil {
+		if err := manager.updateTask(ctx); err != nil {
 			return err
 		}
 		time.Sleep(15 * time.Second)

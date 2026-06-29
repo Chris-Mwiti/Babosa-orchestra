@@ -17,13 +17,24 @@ const (
 
 const (
 	//this checks the no of non-consecutive fails in a closed state
-	MaxFails = iota
+	MaxFails Policy = iota
 
 	//this checks the no of consecutive fails in a closed state
 	MaxConsecutiveFails 
 )
 
-type circuitbreaker struct {
+//exposed for other clients to use
+type ExtraOptions struct {
+
+	Policy Policy
+
+	MaxFails uint64
+	MaxConsecutiveFails uint64
+
+	OpenInterval time.Duration
+}
+
+type Circuitbreaker struct {
 	policy Policy
 	state State
 	mutex sync.Mutex
@@ -41,7 +52,7 @@ type circuitbreaker struct {
 	openChannel chan struct{} 
 }
 
-func (cb *circuitbreaker) Execute( req func ()(interface {}, error)) (interface{}, error) {
+func (cb *Circuitbreaker) Execute( req func ()(interface {}, error)) (interface{}, error) {
 	//checks the current state of the circuit breaker before execution
 	err := cb.doPreRequest()
 
@@ -59,7 +70,7 @@ func (cb *circuitbreaker) Execute( req func ()(interface {}, error)) (interface{
 }
 
 //Purpose: Checks if the state of the breaker is open, if open then cancels the req execution
-func (cb *circuitbreaker) doPreRequest() (error) {
+func (cb *Circuitbreaker) doPreRequest() (error) {
 
 	if cb.state == open {
 		return errors.New("ERR_REQ_CANCELED")
@@ -69,7 +80,7 @@ func (cb *circuitbreaker) doPreRequest() (error) {
 }
 
 //Purpose: 
-func (cb *circuitbreaker) doPostRequest(err error) error {
+func (cb *Circuitbreaker) doPostRequest(err error) error {
 	cb.mutex.Lock()
 	defer cb.mutex.Unlock()
 
@@ -98,7 +109,7 @@ func (cb *circuitbreaker) doPostRequest(err error) error {
 	return err
 } 
 
-func (cb *circuitbreaker) failsExceedThreshold() (bool) {
+func (cb *Circuitbreaker) failsExceedThreshold() (bool) {
 	switch cb.policy {
 	case MaxConsecutiveFails:
 		if cb.fails >= cb.maxConsecutiveFails {
@@ -115,7 +126,7 @@ func (cb *circuitbreaker) failsExceedThreshold() (bool) {
 }
 
 //listens to any incoming breakoff signals 
-func (cb *circuitbreaker) OpenWatcher() {	
+func (cb *Circuitbreaker) OpenWatcher() {	
 	for range cb.openChannel {
 		time.Sleep(cb.openInterval)
 		cb.mutex.Lock()
@@ -125,3 +136,39 @@ func (cb *circuitbreaker) OpenWatcher() {
 	}	
 }
 
+
+func New (opts ...ExtraOptions) Circuitbreaker {
+
+	var opt ExtraOptions
+
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
+	if opt.MaxFails == 0 {
+		opt.MaxFails = 5
+	}
+
+	if opt.MaxConsecutiveFails == 0 {
+		opt.MaxConsecutiveFails = 5
+	}
+
+	if opt.OpenInterval <= 0 {
+		var interval time.Duration
+		interval = (5 * time.Second)
+		opt.OpenInterval = interval
+	}
+
+	cb := Circuitbreaker{
+		maxFails: opt.MaxFails,
+		maxConsecutiveFails: opt.MaxConsecutiveFails,
+		openInterval: opt.OpenInterval,
+
+		openChannel: make(chan struct{}),
+		policy: opt.Policy,
+	}
+
+	go cb.OpenWatcher()
+
+	return cb
+}
