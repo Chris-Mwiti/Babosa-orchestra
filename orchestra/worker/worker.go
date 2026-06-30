@@ -63,20 +63,24 @@ func (worker *Worker) CollectStats(){
 }
 
 //responsible to listen for any incoming task to the queue
-func (worker *Worker) Listen(){
-	for {
-		if worker.Queue.Len() != 0 {
-			result := worker.run()
-			if result.Error != nil {
-				log.Printf("error while running task %v", result.Error)
+func (worker *Worker) Listen(ctx context.Context){
+	select {
+	case <- ctx.Done():
+		return
+	default:
+		for {
+			if worker.Queue.Len() != 0 {
+				result := worker.run()
+				if result.Error != nil {
+					log.Printf("error while running task %v", result.Error)
+				}
+			} else {
+				log.Printf("no tasks to process currently\n")
 			}
-		} else {
-			log.Printf("no tasks to process currently\n")
+			log.Println("sleeping for 15 seconds")
+			time.Sleep(15 * time.Second)
 		}
-		log.Println("sleeping for 15 seconds")
-		time.Sleep(15 * time.Second)
 	}
-
 }
 
 //determine the state of a task & actions: start & stop a task based on their state

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +27,7 @@ func main(){
 	fmt.Println("Upcoming orchestra project")
 	wrkshost := os.Getenv("BABOSA_WORKERS_HOST")
 	wrksport, _ := strconv.Atoi(os.Getenv("BABOSA_WORKERS_PORT"))
+	ctx := context.Background()
 	
 	workerDb := make(map[uuid.UUID]*task.Task)
 	wrk := worker.Worker{
@@ -41,7 +43,7 @@ func main(){
 	}
 
 	//listens for incoming or addition of tasks to the queue
-	go wrk.Listen()	
+	go wrk.Listen(ctx)	
 	//freq collecting stats
 	go wrk.CollectStats()
 	//starts the worker http server
@@ -54,7 +56,7 @@ func main(){
 
 
 	go mg.Process()
-	go mg.ListenToUpdates()
+	go mg.ListenToUpdates(ctx)
 	
 	//create a manager api instance
 	mngPort,err := strconv.Atoi(os.Getenv("BABOSA_MANAGER_PORT"))
