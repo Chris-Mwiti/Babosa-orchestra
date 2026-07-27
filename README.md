@@ -39,7 +39,7 @@ Babosa Orchestra mirrors the classic master-worker topology found in systems lik
 
 ---
 
-## ⚙️ Getting Started
+##  Getting Started
 
 ### Prerequisites
 
