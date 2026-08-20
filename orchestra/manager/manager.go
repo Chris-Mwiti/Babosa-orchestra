@@ -279,7 +279,7 @@ func (manager *Manager) ListenToUpdates(ctx context.Context) (error){
 		if err := manager.updateTask(ctx); err != nil {
 			return err
 		}
-		time.Sleep(15 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 }
 
