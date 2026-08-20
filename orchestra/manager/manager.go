@@ -10,16 +10,16 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"golang.org/x/sync/errgroup"
 	"time"
 
-	circuitbreaker "github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/circuit_breaker"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/task"
 	"github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/worker"
 	"github.com/docker/go-connections/nat"
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
-	
+	"github.com/sony/gobreaker/v2"
 )
 
 var ERR_TASK_404 = errors.New("Task not Found")
@@ -38,7 +38,7 @@ type Manager struct {
 	CurrentWorker string
 
 	mutex sync.Mutex
-	cb circuitbreaker.Circuitbreaker
+	cb *gobreaker.CircuitBreaker[any] 
 }
 
 //actions: Pick the appropriate worker from a pool of workers based on their resource stats
@@ -81,10 +81,7 @@ func (manager *Manager) updateTask(ctx context.Context)(error){
 }
 
 func (manager *Manager) fetchAndUpdateTasks(ctx context.Context, worker string) (error){
-	select {
-	case <- ctx.Done():
-		return errors.New("Context Execution cancelled")
-	default:
+	if err := ctx.Err(); err != nil {
 		url := fmt.Sprintf("http://%s/tasks", worker)
 
 		//@todo: Implement a retry func that will retry failed requests for a number of times
@@ -121,6 +118,7 @@ func (manager *Manager) fetchAndUpdateTasks(ctx context.Context, worker string) 
 		return nil
 
 	}
+	return nil
 }
 
 //actions: add tasks to the task queue
@@ -138,6 +136,7 @@ func (manager *Manager) SendWork() (error){
 		}
 
 		taskItem := taskEvent.Task
+
 		//select the worker using a round robin scheduling algorithim
 		//@todo: later on in the future we are going to improve the algo
 		selecteWorker := manager.SelectWorker()
@@ -166,6 +165,8 @@ func (manager *Manager) SendWork() (error){
 		log.Printf("debugging; generated url (%s)", url)
 
 		resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
+
+		//@todo: Implement a retry strategy for failing uploading of tasks
 		if err != nil {
 			log.Printf("error while posting to worker %s: %v\n", url, err)
 			//enqueue the faile task for retrial
@@ -208,6 +209,10 @@ func (manager *Manager) StopWork(taskId uuid.UUID) (error){
 	wrk := manager.TaskWorkerMap[taskId]
 	
 
+	//@todo: There's a race condition over here when multiple goroutines try to update the current worker
+
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
 	//set the current worker to point the registered worker
 	manager.CurrentWorker = wrk
 
@@ -267,6 +272,10 @@ func (manager *Manager) AddTask(te task.TaskEvent){
 func (manager *Manager) ListenToUpdates(ctx context.Context) (error){
 	log.Printf("Updating the workers tasks %d\n", len(manager.TasksDb))
 	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context done\n")
+		}
+
 		if err := manager.updateTask(ctx); err != nil {
 			return err
 		}
