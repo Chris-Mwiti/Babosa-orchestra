@@ -27,7 +27,7 @@ var stateTransitionMap = map[taskModule.State][]taskModule.State{
 	taskModule.Scheduled: {taskModule.Scheduled,taskModule.Runnig, taskModule.Failed},
 	taskModule.Runnig: {taskModule.Runnig,taskModule.Completed,taskModule.Failed},
 	taskModule.Completed: {},
-	taskModule.Failed: {},
+	taskModule.Failed: {taskModule.Pending},
 }
 
 //state machine helper functions (engine)
@@ -64,22 +64,21 @@ func (worker *Worker) CollectStats(){
 
 //responsible to listen for any incoming task to the queue
 func (worker *Worker) Listen(ctx context.Context){
-	select {
-	case <- ctx.Done():
-		return
-	default:
-		for {
-			if worker.Queue.Len() != 0 {
-				result := worker.run()
-				if result.Error != nil {
-					log.Printf("error while running task %v", result.Error)
-				}
-			} else {
-				log.Printf("no tasks to process currently\n")
+	for {
+		//@todo: should return a context done error
+		if err := ctx.Err(); err != nil {
+			return
+		}	
+		if worker.Queue.Len() != 0 {
+			result := worker.run()
+			if result.Error != nil {
+				log.Printf("error while running task %v", result.Error)
 			}
-			log.Println("sleeping for 15 seconds")
-			time.Sleep(15 * time.Second)
+		} else {
+			log.Printf("no tasks to process currently\n")
 		}
+		log.Println("sleeping for 15 seconds")
+		time.Sleep(15 * time.Second)
 	}
 }
 
