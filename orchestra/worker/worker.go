@@ -2,22 +2,17 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"slices"
 	"time"
 
+	customerrors "github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/customErrors"
 	taskModule "github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/task"
 	"github.com/Chris-Mwiti/build-your-own-x/go_projects/orchestra/utils"
 	"github.com/golang-collections/collections/queue"
 	"github.com/google/uuid"
 )
-
-var TASK_404 = errors.New("404_TASK")
-var COERCION_ERROR = errors.New("COERCION_ERROR")
-var TRANSITION_NOT_SUPPORTED = errors.New("TRANSITION_NOT_SUPPORTED")
-var ERR_FUNC_EXEC = errors.New("func execution error")
 
 
 
@@ -52,8 +47,12 @@ type Worker struct {
 
 
 //responsible for collecting the worker metrics
-func (worker *Worker) CollectStats(){
+func (worker *Worker) CollectStats(ctx context.Context)(error){
 	for {
+		if err := ctx.Err(); err != nil {
+			return customerrors.ERR_CONTEXT_DONE  
+		}
+
 		log.Printf("fetching stats for worker %s\n", worker.Name)
 		worker.Stats = GetStats()
 		worker.Stats.TaskCount = worker.TaskCount
@@ -100,7 +99,7 @@ func (worker *Worker) run() taskModule.DockerResult{
 	if !ok {
 		log.Printf("type coercion failed for queued task")
 		return taskModule.DockerResult{
-			Error: COERCION_ERROR,
+			Error: customerrors.COERCION_ERROR,
 			Action: "coercion",
 			Result: "coercion:failed",
 		}
@@ -126,7 +125,7 @@ func (worker *Worker) run() taskModule.DockerResult{
 		case taskModule.Failed:
 			result = worker.RestartTask(&taskQueued)
 		default:
-			result.Error = TRANSITION_NOT_SUPPORTED
+			result.Error = customerrors.TRANSITION_NOT_SUPPORTED
 		}
 	} else {
 		err := fmt.Errorf("invalid state transition from %v, to %v", taskPersisted.State, taskQueued.State)
@@ -288,7 +287,7 @@ func (w *Worker) FetchTaskDb(taskId string) (*taskModule.Task, error) {
 		return task, nil
 	}
 
-	return nil, TASK_404 
+	return nil, customerrors.TASK_404 
 }
 
 //here for now we are simpling iterating the through an inmemory task db
@@ -312,7 +311,7 @@ func (w *Worker) ListenUpdateTasks() (error) {
 
 		if err != nil {
 			log.Printf("error while listening to update tasks events: %v\n", err)
-			return ERR_FUNC_EXEC 
+			return customerrors.ERR_FUNC_EXEC 
 		}
 		log.Printf("sleeping for 15 seconds")
 		time.Sleep(15 * time.Second)
